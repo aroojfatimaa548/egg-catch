@@ -1,0 +1,29 @@
+# Ignore everything by default, then explicitly allow the files the game
+# actually loads (petal-catch-yellow-shell.html and its referenced assets).
+# This keeps large unused source/original images out of the repo without
+# having to list every one of them by name.
+*
+
+# ...except these
+!.gitignore
+!CLAUDE.md
+!petal-catch-yellow-shell.html
+
+!cursor-wings.png
+!shell-body.png
+!joy-left.png
+!joy-middle.png
+!joy-right.png
+!bg-motion-1.png
+!bg-motion-2.png
+!bg-motion-3.png
+!item-egg.png
+!item-flower-1.png
+!item-flower-2.png
+!item-flower-3.png
+!item-flower-4.png
+!item-flower-5.png
+!item-flower-6.png
+!sfx-bg-music.mp3
+!sfx-click.mp3
+!sfx-game-over.mp3

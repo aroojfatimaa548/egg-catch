@@ -1,0 +1,1258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Petal Catch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  /* ---- ENDESGA 32, the palette the character sprite was drawn on ---- */
+  :root{
+    --ink:#181425; --ink2:#262b44; --slate:#3a4466;
+    --shell:#feae34; --shell-hi:#fee761; --shell-lo:#f77622; --shell-deep:#be4a2f;
+    --btn-a:#e43b44; --btn-b:#0099db; --pad:#3a4466; --pad-hi:#5a6988;
+    --cream:#ead4aa; --white:#fff; --leaf:#63c74d;
+    /* sampled from the pink shell art, for the Press Start button only */
+    --pink-hi:#ffe0ea; --pink-deep:#e88aa8; --plum:#5f2a56;
+    --FRAME_W:260px; --FRAME_H:397.8px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:#0d0221;
+    font-family:"Press Start 2P", ui-monospace, monospace;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden; -webkit-tap-highlight-color:transparent;
+    touch-action:manipulation;
+    cursor:url('cursor-wings.png') 32 14, auto;
+  }
+  /* two stacked frames crossfading between the 3 star-twinkle variants —
+     swapping which one is "on top" every second reads as ambient motion. */
+  .bg-frame{
+    position:fixed; inset:0; z-index:-1;
+    background-size:cover; background-position:center; background-repeat:no-repeat;
+    transition:opacity 1s ease-in-out;
+  }
+  #stage{position:relative}
+  #console{
+    position:absolute; top:0; left:0;
+    width:var(--FRAME_W); height:var(--FRAME_H);
+    transform-origin:0 0;
+  }
+
+  /* ---------- the shell ----------
+     Static pixel-art PNG, transparent background, no joystick baked in — it
+     never changes, so nothing about the body/bezel can ever jitter. */
+  .shell-art{
+    position:absolute; inset:0; width:100%; height:100%;
+    image-rendering:pixelated; image-rendering:-moz-crisp-edges;
+    pointer-events:none; user-select:none;
+  }
+
+  /* the joystick is a separate small sprite layered on top of the shell,
+     in the empty control-strip pocket below the screen. Only this swaps. */
+  .joy-art{
+    position:absolute; left:50.13px; top:288.81px; width:52.22px; height:61.46px;
+    image-rendering:pixelated; image-rendering:-moz-crisp-edges;
+    pointer-events:none; user-select:none;
+  }
+
+  /* screen recess — sits in the transparent cutout painted into the shell art.
+     The game canvas is stretched to fill it exactly (no letterbox bars) —
+     the cutout's aspect ratio is a bit wider than the game's native 200x300,
+     so this is a mild, barely-visible horizontal stretch. */
+  .screen{
+    position:absolute; left:44.14px; top:61.19px; width:177.32px; height:230.13px;
+    background:var(--ink);
+    overflow:hidden;
+  }
+  #game{
+    display:block; width:100%; height:100%;
+    image-rendering:pixelated; image-rendering:-moz-crisp-edges;
+  }
+  /* subtle glass glare, no scanlines — they read as noise at this scale */
+  .glass{
+    position:absolute; inset:0; pointer-events:none;
+    background: linear-gradient(180deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,0) 28%);
+  }
+
+  /* ---------- screens layered over the canvas ---------- */
+  .view{
+    position:absolute; inset:0; display:none;
+    flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; padding:16px;
+  }
+  .view.on{display:flex}
+
+  .view.start{background:rgba(24,20,37,.62)}
+  .kicker{font-size:5px; color:var(--leaf); letter-spacing:2px; margin-bottom:9px}
+  .title{
+    font-size:19px; line-height:1.15; color:var(--shell-hi); letter-spacing:1px;
+    text-shadow:0 3px 0 var(--shell-deep), 0 5px 0 var(--ink);
+    margin-bottom:6px;
+  }
+  .sub{font-size:5.5px; line-height:2; color:var(--cream); letter-spacing:1px; margin-bottom:20px}
+
+  .press{
+    font-family:inherit; font-size:8px; letter-spacing:1px; cursor:pointer;
+    color:var(--ink); background:var(--shell-hi);
+    border:0; padding:9px 14px; border-radius:0;
+    box-shadow:0 4px 0 var(--shell-lo), 0 4px 0 3px var(--ink), 0 0 0 3px var(--ink);
+    animation:blink 1.15s steps(1,end) infinite;
+  }
+  .press:active{transform:translateY(3px); box-shadow:0 1px 0 var(--shell-lo), 0 1px 0 3px var(--ink), 0 0 0 3px var(--ink)}
+  #btnStart{
+    color:var(--plum); background:var(--pink-hi);
+    box-shadow:0 4px 0 var(--pink-deep), 0 4px 0 3px var(--plum), 0 0 0 3px var(--plum);
+  }
+  #btnStart:active{box-shadow:0 1px 0 var(--pink-deep), 0 1px 0 3px var(--plum), 0 0 0 3px var(--plum)}
+  .press:focus-visible{outline:3px solid var(--leaf); outline-offset:5px}
+  @keyframes blink{0%,64%{opacity:1}65%,100%{opacity:.35}}
+
+  .hint{margin-top:18px; font-size:5px; color:#8b9bb4; line-height:2.1; letter-spacing:.5px}
+
+  .ghost{
+    margin-top:11px; font-family:inherit; font-size:6px; letter-spacing:1px; cursor:pointer;
+    color:var(--leaf); background:transparent; border:0; padding:5px 8px;
+    box-shadow:inset 0 0 0 2px rgba(99,199,77,.55); border-radius:0;
+  }
+  .ghost:active{background:rgba(99,199,77,.16)}
+  .ghost:focus-visible{outline:3px solid var(--leaf); outline-offset:3px}
+
+  /* faces picker */
+  .view.faces{background:rgba(24,20,37,.9)}
+  .fc-t{font-size:8px; color:var(--shell-hi); letter-spacing:1px; margin-bottom:16px}
+  .slots{display:flex; gap:5px; margin-bottom:14px}
+  .slot{
+    width:29px; height:29px; padding:0; cursor:pointer; border:0; border-radius:0;
+    background:var(--ink2); box-shadow:inset 0 0 0 2px var(--slate);
+    display:flex; align-items:center; justify-content:center;
+    font-family:inherit; font-size:9px; color:var(--steel);
+  }
+  .slot canvas{width:23px; height:23px; image-rendering:pixelated}
+  .slot.full{box-shadow:inset 0 0 0 2px var(--leaf)}
+  .slot:focus-visible{outline:3px solid var(--leaf); outline-offset:3px}
+
+  .seg{display:flex; margin-bottom:12px; box-shadow:0 0 0 2px var(--slate); border-radius:0; overflow:hidden}
+  .seg button{
+    font-family:inherit; font-size:5px; letter-spacing:.5px; cursor:pointer; border:0;
+    padding:6px 7px; background:var(--ink2); color:var(--mist);
+  }
+  .seg button.sel{background:var(--leaf); color:var(--ink)}
+  .seg button:disabled{opacity:.35; cursor:not-allowed}
+  .seg button:focus-visible{outline:3px solid var(--sun); outline-offset:-3px}
+
+  /* start-screen mode capsules: sheer over the art, text stays crisp */
+  #segStart{box-shadow:0 0 0 2px rgba(58,68,102,.55)}
+  #segStart button{background:rgba(38,43,68,.45); color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.6)}
+  #segStart button.sel{background:rgba(99,199,77,.7); color:var(--ink); text-shadow:none}
+
+  .fc-hint{font-size:4.5px; color:#8b9bb4; line-height:2.2; letter-spacing:.5px;
+           margin-bottom:14px; min-height:20px; padding:0 6px}
+  .press.tiny{font-size:6px; padding:7px 12px}
+  .press.alt{background:var(--slate); color:var(--fog); box-shadow:0 4px 0 #262b44, 0 4px 0 3px var(--ink), 0 0 0 3px var(--ink); animation:none}
+
+  /* framing */
+  .view.crop{background:rgba(24,20,37,.94)}
+  #cropCv{
+    width:120px; height:150px; display:block; margin-bottom:11px;
+    border-radius:0; box-shadow:0 0 0 2px var(--slate); touch-action:none; cursor:grab;
+  }
+  #cropCv:active{cursor:grabbing}
+  #zoomR{
+    -webkit-appearance:none; appearance:none; width:118px; height:8px; margin-bottom:8px;
+    background:var(--ink2); border-radius:0; box-shadow:inset 0 0 0 2px var(--slate);
+  }
+  #zoomR::-webkit-slider-thumb{
+    -webkit-appearance:none; width:12px; height:14px; border-radius:0;
+    background:var(--shell-hi); box-shadow:0 0 0 2px var(--ink); cursor:pointer;
+  }
+  #zoomR::-moz-range-thumb{
+    width:12px; height:14px; border:0; border-radius:0;
+    background:var(--shell-hi); box-shadow:0 0 0 2px var(--ink); cursor:pointer;
+  }
+  #zoomR:focus-visible{outline:3px solid var(--leaf); outline-offset:3px}
+  .row{display:flex; gap:8px}
+
+  /* game over card */
+  .view.over{background:rgba(24,20,37,.78)}
+  .card{
+    background:var(--ink2); border-radius:0; padding:16px 14px;
+    box-shadow:0 0 0 3px var(--ink), 0 6px 0 rgba(0,0,0,.4);
+  }
+  .over-t{font-size:11px; color:var(--btn-a); letter-spacing:1px; margin-bottom:14px}
+  .over-l{font-size:5px; color:#8b9bb4; letter-spacing:1.5px; margin-bottom:6px}
+  .over-n{font-size:24px; color:var(--shell-hi); margin-bottom:4px}
+  .over-best{font-size:5px; color:var(--leaf); letter-spacing:1px; margin-bottom:16px}
+
+  /* ---------- controls ----------
+     The joystick is painted into the shell art itself (3 frames: left-leaning,
+     centred, right-leaning). This is just an invisible hit-zone sitting over
+     the drawn joystick, sized generously so it's easy to tap on a phone. */
+  .stick{
+    position:absolute; left:31px; top:283px; width:88px; height:85px;
+    cursor:inherit; touch-action:none;
+  }
+  .stick:focus-visible{outline:3px solid var(--leaf); outline-offset:2px}
+
+  /* B button on the shell art is decorative pixels, not a real element —
+     this is an invisible round hit-zone sitting over it, wired as "back". */
+  .btn-b-zone{
+    position:absolute; left:159.5px; top:314.6px; width:26px; height:26px;
+    border:0; background:transparent; border-radius:50%; cursor:inherit;
+  }
+  .btn-b-zone:focus-visible{outline:3px solid var(--leaf); outline-offset:2px}
+
+  @media (prefers-reduced-motion: reduce){
+    .press{animation:none}
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-frame" id="bgA" style="opacity:1"></div>
+<div class="bg-frame" id="bgB" style="opacity:0"></div>
+
+<div id="stage">
+  <div id="console">
+    <img class="shell-art" id="shellArt" src="shell-body.png" alt="" draggable="false">
+    <img class="joy-art" id="joyArt" src="joy-middle.png" alt="" draggable="false">
+
+    <div class="screen">
+      <canvas id="game" width="200" height="300"></canvas>
+
+      <div class="view start on" id="viewStart">
+        <div class="kicker">A ONE-BASKET GAME</div>
+        <div class="title">EGG<br>CATCH</div>
+        <div class="sub">CATCH THE FLOWERS<br>MISS THREE AND IT ENDS</div>
+        <div class="seg" id="segStart">
+          <button data-m="flowers" class="sel">FLOWERS</button>
+          <button data-m="eggs">EGGS</button>
+          <button data-m="faces">FACES</button>
+        </div>
+        <button class="press" id="btnStart">PRESS START</button>
+        <button class="ghost" id="btnFaces" hidden>+ ADD FACES</button>
+      </div>
+
+      <div class="view faces" id="viewFaces">
+        <div class="fc-t">YOUR FACES</div>
+        <div class="slots" id="slots"></div>
+        <div class="seg" id="seg">
+          <button data-m="flowers" class="sel">FLOWERS</button>
+          <button data-m="eggs">EGGS</button>
+          <button data-m="faces">FACES</button>
+        </div>
+        <div class="fc-hint" id="facesHint">TAP A SLOT TO ADD A PHOTO</div>
+        <button class="press tiny" id="btnFacesDone">DONE</button>
+      </div>
+
+      <div class="view crop" id="viewCrop">
+        <div class="fc-t">FRAME THE FACE</div>
+        <canvas id="cropCv" width="360" height="450"></canvas>
+        <input type="range" id="zoomR" min="100" max="450" value="140" aria-label="Zoom">
+        <div class="fc-hint">DRAG TO MOVE &middot; SLIDER TO ZOOM</div>
+        <div class="row">
+          <button class="press tiny alt" id="cropCancel">CANCEL</button>
+          <button class="press tiny" id="cropOk">USE THIS</button>
+        </div>
+      </div>
+
+      <div class="view over" id="viewOver">
+        <div class="card">
+          <div class="over-t">TIME'S UP</div>
+          <div class="over-l">FLOWERS</div>
+          <div class="over-n" id="finalScore">0</div>
+          <div class="over-best" id="bestScore">BEST 0</div>
+          <button class="press" id="btnAgain">PLAY AGAIN</button>
+        </div>
+      </div>
+
+      <div class="glass"></div>
+    </div>
+    <input type="file" id="filePick" accept="image/*" hidden>
+    <audio id="sfxBg" src="sfx-bg-music.mp3" loop preload="auto"></audio>
+    <audio id="sfxOver" src="sfx-game-over.mp3" preload="auto"></audio>
+    <audio id="sfxClick" src="sfx-click.mp3" preload="auto"></audio>
+
+    <div class="controls">
+      <div class="stick" id="stick" tabindex="0" role="slider" aria-label="Move left or right" aria-valuemin="-1" aria-valuemax="1" aria-valuenow="0"></div>
+      <button class="btn-b-zone" id="btnB" aria-label="Back"></button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* ============================================================
+   0.  CONSTANTS
+   ============================================================ */
+const FRAME_W = 260, FRAME_H = 397.8;    // whole console, in logical px — must match --FRAME_W/--FRAME_H in CSS
+const W = 200, H = 300;                  // the screen, in logical px (game's internal render resolution)
+
+// Sprite geometry, measured off the actual layer exports.
+// The three gribble layers all sit on the same 100x100 canvas, so cropping them
+// with one shared box leaves them pixel-aligned at (0,0).
+const SPR_W = 50, SPR_H = 92;
+const FRONT_Y = 53;                        // where the basket-front layer sits on the body
+const CATCH = { ox:4, oy:46, w:42, h:13 }; // hitbox, relative to sprite origin
+
+const GRASS_Y = 242, SOIL_Y = 258;
+const FEET_Y  = 262;
+const PLAYER_Y = FEET_Y - SPR_H;         // = 170
+const MISS_Y  = 252;
+
+const P = { // ENDESGA 32
+  ink:'#181425', ink2:'#262b44', slate:'#3a4466', steel:'#5a6988', mist:'#8b9bb4',
+  fog:'#c0cbdc', white:'#ffffff', sky:'#2ce8f5', sky2:'#0099db', deep:'#124e89',
+  sun:'#fee761', gold:'#feae34', tang:'#f77622', red:'#e43b44', rust:'#be4a2f',
+  leaf:'#63c74d', pine:'#3e8948', moss:'#265c42', bog:'#193c3e',
+  bark:'#733e39', dirt:'#3e2731', clay:'#b86f50', sand:'#ead4aa',
+  rose:'#f6757a', plum:'#b55088', skin:'#e8b796'
+};
+
+/* the same 32 colours as RGB triples, for snapping uploaded photos to the game's palette */
+const PAL32 = [
+ [190,74,47],[215,118,67],[234,212,170],[228,166,114],[184,111,80],[115,62,57],[62,39,49],[162,38,51],
+ [228,59,68],[247,118,34],[254,174,52],[254,231,97],[99,199,77],[62,137,72],[38,92,66],[25,60,62],
+ [18,78,137],[0,153,219],[44,232,245],[255,255,255],[192,203,220],[139,155,180],[90,105,136],[58,68,102],
+ [38,43,68],[24,20,37],[255,0,68],[104,56,108],[181,80,136],[246,117,122],[232,183,150],[194,133,105]
+];
+function snap(r, g, b){
+  let bi = 0, bd = Infinity;
+  for (let i = 0; i < PAL32.length; i++){
+    const p = PAL32[i], dr = r-p[0], dg = g-p[1], db = b-p[2];
+    const d = 2*dr*dr + 4*dg*dg + 3*db*db;   // cheap perceptual weighting
+    if (d < bd){ bd = d; bi = i; }
+  }
+  return PAL32[bi];
+}
+const cv  = document.getElementById('game');
+const ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+function makeCanvas(w, h){
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  return { c, g };
+}
+
+/* ---------- animated backdrop, 3 star-twinkle frames crossfading ---------- */
+const BG_FRAMES = ['bg-motion-1.png', 'bg-motion-2.png', 'bg-motion-3.png'];
+const bgA = document.getElementById('bgA');
+const bgB = document.getElementById('bgB');
+BG_FRAMES.forEach(src => { const pre = new Image(); pre.src = src; }); // preload, avoid a flash on first swap
+bgA.style.backgroundImage = `url('${BG_FRAMES[0]}')`;   // frame 0 shown immediately (opacity:1 in HTML)
+let bgIdx = 0, bgShowingA = true;
+setInterval(() => {
+  bgIdx = (bgIdx + 1) % BG_FRAMES.length;
+  const incoming = bgShowingA ? bgB : bgA;       // the currently-hidden layer becomes the next frame
+  incoming.style.backgroundImage = `url('${BG_FRAMES[bgIdx]}')`;
+  bgA.style.opacity = bgShowingA ? '0' : '1';
+  bgB.style.opacity = bgShowingA ? '1' : '0';
+  bgShowingA = !bgShowingA;
+}, 1000);
+
+/* ============================================================
+   2.  RESPONSIVE SCALING
+   Integer scale when there's room (crisp pixels), best-fit below that.
+   ============================================================ */
+const stage = document.getElementById('stage');
+const shell = document.getElementById('console');
+
+function fit(){
+  const availW = window.innerWidth  - 24;
+  const availH = window.innerHeight - 24;
+  let s = Math.min(availW / FRAME_W, availH / FRAME_H);
+  if (s >= 2) s = Math.floor(s);          // integer scaling once it fits
+  s = Math.max(s, 0.4);
+  shell.style.transform = `scale(${s})`;
+  stage.style.width  = (FRAME_W * s) + 'px';
+  stage.style.height = (FRAME_H * s) + 'px';
+}
+addEventListener('resize', fit);
+addEventListener('orientationchange', () => setTimeout(fit, 120));
+fit();
+
+/* ============================================================
+   3.  TINY 3x5 BITMAP FONT  (crisp at any scale, unlike canvas text)
+   ============================================================ */
+const GLYPH = {
+  '0':'111101101101111','1':'010110010010111','2':'111001111100111',
+  '3':'111001111001111','4':'101101111001001','5':'111100111001111',
+  '6':'111100111101111','7':'111001001001001','8':'111101111101111',
+  '9':'111101111001111','x':'000101010101000',' ':'000000000000000',
+  'S':'111100111001111','C':'111100100100111','O':'111101101101111',
+  'R':'111101111110101','E':'111100111100111','B':'110101110101110',
+  'T':'111010010010010','P':'111101111100100','L':'100100100100111',
+  'A':'111101111101101','Y':'101101111010010','+':'000010111010000',
+  'M':'101111111101101','I':'111010010010111','!':'010010010000010',
+  'V':'101101101101010'
+};
+function text(g, str, x, y, col, px=1){
+  g.fillStyle = col;
+  let cx = x;
+  for (const ch of str.toUpperCase()){
+    const bits = GLYPH[ch];
+    if (bits){
+      for (let i=0;i<15;i++){
+        if (bits[i] === '1') g.fillRect(cx + (i%3)*px, y + ((i/3)|0)*px, px, px);
+      }
+    }
+    cx += 4*px;
+  }
+}
+const textW = (s, px=1) => s.length * 4 * px - px;
+
+/* ============================================================
+   4.  ITEM SPRITES  —  loaded from small cropped PNGs (item-flower-*.png,
+   item-egg.png), sitting next to the HTML file. Each sprite object is
+   { c, w, h, tint } same as before, so the rest of the game (spawn, catch,
+   settle-in-basket) never needs to know these came from files, not pixel
+   maps — it just reads sp.c/sp.w/sp.h. tint only matters for catch-puff
+   particle colour, so a fixed guess per item is fine.
+   ============================================================ */
+function loadItemImg(src, w, h, tint){
+  const img = new Image();
+  const sp = { c: img, w, h, tint, ready: false };
+  img.onload = () => { sp.ready = true; };
+  img.src = src;
+  return sp;
+}
+/* Source PNGs are 32px (sharp — plenty of detail to downsample from); the
+   w/h here are the small on-screen DRAW size, kept close to the original
+   hand-pixelled sprites' scale so items don't dwarf the character. */
+const FLOWER_FILES = [
+  ['item-flower-1.png', 12, 12, P.sun],
+  ['item-flower-2.png', 12, 11, P.red],
+  ['item-flower-3.png', 12, 11, P.tang],
+  ['item-flower-4.png', 12, 12, P.rose],
+  ['item-flower-5.png', 12, 12, P.plum],
+  ['item-flower-6.png', 12, 12, P.sky2]
+];
+const BUILTIN_FLOWERS = FLOWER_FILES.map(([src,w,h,tint]) => loadItemImg(src, w, h, tint));
+const BUILTIN_EGGS    = [loadItemImg('item-egg.png', 11, 13, P.sand)];
+const custom  = [];                 // user faces, up to 5
+let deckMode  = 'flowers';          // 'flowers' | 'eggs' | 'faces'
+
+/* deck() only hands out sprites that have actually finished loading, so a
+   spawn can never try to draw a not-yet-ready image. */
+function deck(){
+  if (deckMode === 'faces'){
+    if (custom.length) return custom;
+  } else if (deckMode === 'eggs'){
+    const ready = BUILTIN_EGGS.filter(s => s.ready);
+    if (ready.length) return ready;
+  } else {
+    const ready = BUILTIN_FLOWERS.filter(s => s.ready);
+    if (ready.length) return ready;
+  }
+  const fallback = BUILTIN_FLOWERS.filter(s => s.ready);
+  return fallback.length ? fallback : BUILTIN_FLOWERS;
+}
+
+/* heart, 7x6 */
+const HEART = ['.dd.dd.','dPPdPPd','dPPPPPd','.dPPPd.','..dPd..','...d...'];
+function bakeHeart(fill){
+  const { c, g } = makeCanvas(7, 6);
+  HEART.forEach((row, y) => [...row].forEach((ch, x) => {
+    const col = ch === 'd' ? P.ink : ch === 'P' ? fill : null;
+    if (col){ g.fillStyle = col; g.fillRect(x, y, 1, 1); }
+  }));
+  return c;
+}
+const HEART_FULL = bakeHeart(P.red);
+const HEART_GONE = bakeHeart(P.slate);
+
+/* ============================================================
+   4b.  PHOTO  ->  OVAL HEAD
+   An oval crop does two jobs at once: it frames the face and it removes
+   the background, because everything outside the oval is discarded.
+   Rendered as a real smooth photo (no palette-snap, no pixel outline) —
+   this is the one deliberately non-pixel-art sprite in the game, since a
+   recognisable face reads better as a small clear photo than as an
+   8-colour blob. It still sits inside the same falling-item pipeline as
+   the flowers/eggs ({c,w,h,tint}), just drawn from a smoother source. */
+/* FACE_W/H is the sprite's stored bitmap resolution — kept much bigger than
+   its on-screen size (FACE_DRAW_W/H) on purpose: the canvas's own
+   nearest-neighbour CSS stretch (needed for the pixel-art flowers/
+   character) would visibly alias a smooth photo if the bitmap only had as
+   many pixels as it's drawn at, so the extra resolution is spare headroom
+   the stretch can chew on without it turning jaggy. */
+const FACE_W = 48, FACE_H = 60;
+const FACE_DRAW_W = 20, FACE_DRAW_H = 25;   // actual in-game size, fits the basket
+
+function loadFile(file){
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload  = () => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = fr.result; };
+    fr.onerror = rej;
+    fr.readAsDataURL(file);
+  });
+}
+
+function ovalMask(g, w, h){
+  g.globalCompositeOperation = 'destination-in';
+  g.fillStyle = '#000';
+  g.beginPath();
+  g.ellipse(w/2, h/2, w/2 - 1, h/2 - 1, 0, 0, Math.PI*2);
+  g.fill();
+  g.globalCompositeOperation = 'source-over';
+}
+
+/* Average colour of the opaque pixels, used only for the catch-puff particle tint. */
+function averageColor(g, w, h){
+  const d = g.getImageData(0, 0, w, h).data;
+  let rr = 0, gg = 0, bb = 0, n = 0;
+  for (let i = 0; i < w*h; i++){
+    const o = i*4;
+    if (d[o+3] < 128) continue;
+    rr += d[o]; gg += d[o+1]; bb += d[o+2]; n++;
+  }
+  return n ? `rgb(${(rr/n)|0},${(gg/n)|0},${(bb/n)|0})` : P.sun;
+}
+
+/* ---------- framing ---------- */
+const CW = 120, CH = 150;            // preview box, logical px
+const OVW = 76, OVH = 98;            // the oval guide inside it
+const K = 4;                         // working canvas is 4x the oval
+const crop = { img:null, base:1, zoom:1.4, x:0, y:0 };
+
+const cropCv  = document.getElementById('cropCv');
+const cropCtx = cropCv.getContext('2d');
+cropCtx.scale(3, 3);                 // 3x backing store so the photo stays sharp
+
+function drawCrop(){
+  if (!crop.img) return;
+  const g = cropCtx;
+  g.clearRect(0, 0, CW, CH);
+  g.fillStyle = P.ink2; g.fillRect(0, 0, CW, CH);
+  g.imageSmoothingEnabled = true;
+
+  const s = crop.base * crop.zoom;
+  const w = crop.img.width * s, h = crop.img.height * s;
+  const ox = CW/2 - w/2 + crop.x, oy = CH/2 - h/2 + crop.y;
+
+  g.globalAlpha = 0.26;                     // faint everywhere, so you can see what you're aiming
+  g.drawImage(crop.img, ox, oy, w, h);
+  g.globalAlpha = 1;
+
+  g.save();                                 // full strength inside the oval only
+  g.beginPath();
+  g.ellipse(CW/2, CH/2, OVW/2, OVH/2, 0, 0, Math.PI*2);
+  g.clip();
+  g.drawImage(crop.img, ox, oy, w, h);
+  g.restore();
+
+  g.beginPath();
+  g.ellipse(CW/2, CH/2, OVW/2, OVH/2, 0, 0, Math.PI*2);
+  g.strokeStyle = P.sun; g.lineWidth = 1.5; g.stroke();
+}
+
+function openCrop(img){
+  crop.img  = img;
+  crop.base = Math.max(OVW / img.width, OVH / img.height);  // oval starts covered
+  crop.zoom = 1.4; crop.x = 0; crop.y = 0;
+  document.getElementById('zoomR').value = 140;
+  overlay = 'crop'; show(); drawCrop();
+}
+
+/* Re-render the framed region at high working resolution, mask it to the
+   oval, then downsize ONCE straight to the final draw size with smoothing —
+   one clean resample, same as the crop preview, so it looks like the photo
+   the user actually framed instead of a re-quantised copy of it. */
+function buildOvalSprite(){
+  const WW = OVW * K, WH = OVH * K;
+  const work = makeCanvas(WW, WH);
+  work.g.imageSmoothingEnabled = true;
+  const s = crop.base * crop.zoom * K;
+  const w = crop.img.width * s, h = crop.img.height * s;
+  work.g.drawImage(crop.img, WW/2 - w/2 + crop.x*K, WH/2 - h/2 + crop.y*K, w, h);
+  ovalMask(work.g, WW, WH);
+
+  const out = makeCanvas(FACE_W, FACE_H);
+  out.g.imageSmoothingEnabled = true;
+  out.g.drawImage(work.c, 0, 0, WW, WH, 0, 0, FACE_W, FACE_H);
+
+  const tint = averageColor(out.g, FACE_W, FACE_H);
+  return { c: out.c, w: FACE_DRAW_W, h: FACE_DRAW_H, tint, isPhoto: true };
+}
+
+/* ============================================================
+   5.  BACKGROUND  —  baked once into an offscreen canvas
+   ============================================================ */
+const bg = makeCanvas(W, H);
+function checker(g, x, y, w, h, col){    // 50% dither, the classic pixel blend
+  g.fillStyle = col;
+  for (let j=0;j<h;j++) for (let i=(j%2);i<w;i+=2) g.fillRect(x+i, y+j, 1, 1);
+}
+/* The on-screen canvas is stretched ~15.6% wider than tall to fill the
+   shell's screen cutout without letterbox bars, so every round shape here
+   is pre-squashed horizontally by STRETCH_X — after the CSS stretch it
+   reads as a true circle again instead of a sideways-bulging oval. */
+const STRETCH_X = 1.15578;
+function bush(g, cx, base, r, col, hi){
+  const rx = r / STRETCH_X;
+  g.fillStyle = col;
+  for (let y=0;y<r;y++){
+    const half = Math.round(rx * Math.sqrt(1 - (y*y)/(r*r)));
+    g.fillRect(cx-half, base-y, half*2, 1);
+  }
+  g.fillStyle = hi;
+  for (let y=Math.floor(r*.45); y<r-1; y++){
+    const half = Math.round(rx * Math.sqrt(1 - (y*y)/(r*r)));
+    g.fillRect(cx-half+1, base-y, Math.max(2, half), 1);
+  }
+}
+function tree(g, x, base){
+  g.fillStyle = P.bark; g.fillRect(x-2, base-18, 5, 18);
+  g.fillStyle = P.dirt; g.fillRect(x+2, base-18, 1, 18);
+  bush(g, x, base-16, 15, P.pine, P.leaf);
+  bush(g, x-7, base-10, 8, P.moss, P.pine);
+  g.fillStyle = P.red;
+  [[-6,-22],[5,-27],[-2,-15],[8,-18]].forEach(([dx,dy]) => g.fillRect(x+dx, base+dy, 2, 2));
+}
+/* Level 1/2/3 reuse the exact same scene geometry (hills, trees, fence,
+   grass, soil never move) — only the sky bands + checker-dither colours
+   swap, day -> sunset -> night, so re-baking on level-up is cheap and the
+   hand-tuned layout above never needs to be redrawn from scratch. */
+const SKY_PALETTES = [
+  { bands:[[0,58,'#0099db'],[58,116,'#2ce8f5'],[116,176,'#a8f0f2'],[176,'GRASS','#fee761']],
+    checker:['#2ce8f5','#a8f0f2','#fee761'], stars:0 },
+  { bands:[[0,58,'#b55088'],[58,116,'#f77622'],[116,176,'#feae34'],[176,'GRASS','#fee761']],
+    checker:['#f77622','#feae34','#fee761'], stars:0 },
+  { bands:[[0,58,'#181425'],[58,116,'#262b44'],[116,176,'#3a4466'],[176,'GRASS','#5a6988']],
+    checker:['#262b44','#3a4466','#5a6988'], stars:1 }
+];
+function paintBG(level){
+  const pal = SKY_PALETTES[Math.max(0, Math.min(2, level - 1))];
+  const g = bg.g;
+  // banded, dithered sky
+  const bands = pal.bands.map(([y0,y1,col]) => [y0, y1==='GRASS'?GRASS_Y:y1, col]);
+  bands.forEach(([y0,y1,col]) => { g.fillStyle = col; g.fillRect(0, y0, W, y1-y0); });
+  checker(g, 0, 50,  W, 12, pal.checker[0]);
+  checker(g, 0, 108, W, 12, pal.checker[1]);
+  checker(g, 0, 168, W, 14, pal.checker[2]);
+
+  if (pal.stars){
+    g.fillStyle = P.white;
+    for (let i=0;i<24;i++){
+      const x = (i*37 + 5) % W, y = (i*17 + 3) % 150;
+      g.fillRect(x, y, 1, 1);
+    }
+  }
+
+  // far hills
+  [[26,232,22],[86,234,26],[150,231,20],[196,235,18]].forEach(([x,b,r]) => bush(g,x,b,r,P.moss,P.pine));
+  // near bushes
+  [[10,246,15],[52,247,12],[104,246,14],[146,247,11],[186,246,16]].forEach(([x,b,r]) => bush(g,x,b,r,P.pine,P.leaf));
+  // trees
+  tree(g, 18, 246); tree(g, 178, 246);
+  tree(g, 46, 236); tree(g, 154, 236);
+  // fence
+  g.fillStyle = P.clay;
+  g.fillRect(72, 226, 3, 20); g.fillRect(96, 226, 3, 20);
+  g.fillRect(70, 231, 31, 3); g.fillRect(70, 238, 31, 3);
+  g.fillStyle = P.bark; g.fillRect(70, 234, 31, 1); g.fillRect(70, 241, 31, 1);
+
+  // grass band with a toothed top edge
+  g.fillStyle = P.leaf; g.fillRect(0, GRASS_Y, W, SOIL_Y - GRASS_Y);
+  g.fillStyle = P.leaf;
+  for (let x=0;x<W;x+=4) g.fillRect(x, GRASS_Y-2, 2, 2);
+  g.fillStyle = P.pine; g.fillRect(0, GRASS_Y+9, W, 3);
+  for (let x=2;x<W;x+=7) g.fillRect(x, GRASS_Y+3, 1, 4);
+
+  // soil
+  g.fillStyle = P.bark; g.fillRect(0, SOIL_Y, W, H - SOIL_Y);
+  g.fillStyle = P.dirt;
+  for (let x=0;x<W;x+=5) g.fillRect(x, SOIL_Y, 3, 2);
+  for (let i=0;i<70;i++){
+    const x = (i*29)%W, y = SOIL_Y + 4 + (i*13)%(H-SOIL_Y-6);
+    g.fillStyle = (i%3) ? P.dirt : P.clay;
+    g.fillRect(x, y, 2, 1);
+  }
+}
+paintBG(1);
+
+/* drifting clouds, drawn live */
+const CLOUD = ['...ddddd....','..dwwwwwd...','.dwwwwwwwdd.','dwwwwwwwwwwd','dfffffffffwd','.ddddddddddd'];
+const cloudImg = (() => {
+  const { c, g } = makeCanvas(12, 6);
+  CLOUD.forEach((row,y) => [...row].forEach((ch,x) => {
+    const col = ch==='d'?P.ink : ch==='w'?P.white : ch==='f'?P.fog : null;
+    if (col){ g.fillStyle=col; g.fillRect(x,y,1,1); }
+  }));
+  return c;
+})();
+const clouds = [
+  { x:20,  y:34,  s:2, v:3.5 },
+  { x:130, y:62,  s:1, v:5.5 },
+  { x:78,  y:104, s:2, v:2.6 },
+  { x:168, y:140, s:1, v:4.2 },
+  { x:6,   y:74,  s:1, v:4.8 },
+  { x:104, y:24,  s:1, v:6.1 },
+  { x:150, y:96,  s:2, v:3.1 },
+  { x:44,  y:126, s:1, v:5.0 },
+  { x:186, y:52,  s:2, v:2.9 }
+];
+
+/* ============================================================
+   6.  CHARACTER
+   ============================================================ */
+let charReady = false, frontReady = false;
+
+const charImg = new Image();          // full composite: body + basket
+charImg.onload = () => { charReady = true; };
+charImg.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAABcCAYAAAAsweabAAAE/0lEQVR42u2bT2gbVxDGv31VA3GDFlwdTCihCagpDrSEgEsvpgQCpaYUG58cMASilJxK8a2GHgLJzYScQuKCICCdgkMpPgVKkouJoIgELEIMaSjF+LA1yLT2oS3qQR3xtNp9+/7MrjbCAz7sat/u/N43M+/tSPbAYBOlcsdl/E6w5bn64HEAzL79r5MTD/5+yxnIc4FwBeCEEXmAkFW1DVORBwgOGJFlUqcJI2wflAVMKiBphlQcjIkqYlghtVn0WcNZcMm9WfS1nUsjXwRnSK1882ksTNR5HXDdZwvOGfTf/0g7rH64+TWreoIr3lWObRb9SLVUCg4FRMe5KLV0FcwEhGY77BzByGrFQXKoIjggwjNLYJtFH2f22rj87Z0eJH1G5+RrXYA83RpO1UN+WBSEbO3Xz7F0awMAEpNbvhYAzuy1+3bFSTtjz2Qh+uDdY4nOu5oM9PKPP7VfwpQgT+4tof36OQDgy+8f4qdrF1KFCAPRMykspxdXYkGMckQHYnpxBdOLK9af21a0gv4NH2IYpgskVA0BnZnLylRhZVS1yJ7cWxq4Lmh2K0zprFn5VI2LmkQVSMGkTRMGI0dsIGhM0GzHApk0IoSNxLIj9Kczo1Hnou5hE9LGrRdSJSrEkhw3GWPaFrLqIckhpuOcqdI2vS2WTqMLkCsACwjn+7xr/9cDk8lAqq0MbT24ANhDCwDqU2NYaOzHwsgQ8rVDDa2JUrlTnxoDAJz/6j7G19dw/586AAw4GDYaN19YwO7MHH7+cb43LvMmNjmjctTmM9ucK3BD6DicNG6hUe6YKpO7Jrbts4TNjKVtNs8Q3CHFCZNKEztLCBsYgRGxApca9ZMbmP91AQe//aL14KMnzqF+cgOfY46lihW4ZmT28REcPQEcXL2uB7K+htnHR4DJjBTRsfH1NexevY4DgzG7M3MA5jC+vsYCIlzDamb7tLMTSffQSXqRpgNZ3mtkqpZnE1a0u22/d7bvvG6i9xL+9nLfsf97U7myq3bHRske3p4/u3G+7/jj75b1q9b/EPI9phebfc8xWYSNQOjGlRf7+GvPPRzCE+Gy17Iqv6sfjqHyYn+gieAD8Je/MGg8NAeaFrZbIet1RFZE7oSsXprSGl+pNnpjOVpKxiAUv+8UQyppAoSvJ6Dw/U2VMfrGKuwwOXFxsuQ0m7VWEHtv3baRskmtM8uPnr5iWQc+++SUdjhGQXkyQJaOc4LtBFteQZ79SrXhHCZcljRhtVbQ83kg2eUPwjYsQMofVa5GVq248OJKbJcCoKxaE6VyZ/XSlFJKOV7jFOM2GSDJt0q10QW5OFnqOUuDwscmSZhGjqj8q7WCbmjpOBcHlnbV0kn6vvJLsZ+kTN6Oa60AO8GWN3rtoDdNCTqm0BK0MmZVjTitUm30tikDey0qe3lXQoYYaD68KcqEIWLfRx49fZX7HBnZdlAh6sWl1kInr9WM1g1tReJ2ncM0lU+Jr7q0oRymEjKAcYOOBlSq3TCjF5msq1MSQKIiOiqllQO6zlu3g8IqcSmlaio4t4NMFOIyl9+iOH9jFe4SJv0alCYgapyLjf73I64hFaeKy9hUQmv7bvzPY49faac2duRD6xBk5EGOX2krk3Un2PJs8+BQkZEGmSiVO6ry6Wrbd/1s/jE/TQgXGJE3CFuYw2TPfRfFZf3Q3fB115Ju2HCFq9WrLteulfN+/wGMhGNwvLEv2AAAAABJRU5ErkJggg==';
+
+const frontImg = new Image();         // just the woven front face, 50x22
+frontImg.onload = () => { frontReady = true; };
+frontImg.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAWCAYAAACCAs+RAAABPUlEQVR42t1XOxKDIBR8MB6BgjozNDmAaXOPVBaeysKKe6SNB6DJTGoL7kAK55kXAtH4i7odiOOuC28fAAAghXJSKAcbA+XNcbLIUtiSGCmUK7K0HSf0YZGlkJcQFFPbO/sX4dA8FfEhJLQAgQKXEoQCYnx8MLToentEF51PByKoWsQJKqCLW15WjZDLUbRk8SV/HBI1J2LfDfHTxjZbSxvbSTAmbC70/Z42tjkjtb0zKZSLObH2MZ5bDjtBQi2ih34LztDCw/+ZEVMAubNYWq7dmbys3gzgvrqlcmIMfBHBZEf1W6hWFPurWnR7afNqHNfmhDY2WJx4V2KuCd84sT7tc59ebM4xFRCLiqSrPkuhnDa2Dcylq1Pf+9BPQei7NNcZGHKZS4akKLpEW5up/vzQTmNUazL1HX9Mq/QE3s1rq4J3mjcAAAAASUVORK5CYII=';
+
+/* ============================================================
+   7.  GAME STATE
+   ============================================================ */
+const START = 'start', PLAY = 'play', OVER = 'over';
+let state = START;
+
+/* 3 levels, gated by score. Each is a fixed difficulty step (not the old
+   smooth score-based ramp) plus its own sky palette — crossing a threshold
+   re-bakes the background (paintBG is cheap, see section 5) and fires a
+   LEVEL UP banner using the same transient-text mechanic as the +1 popup. */
+const LEVELS = [
+  { threshold:0,  vyBase:34, vyMax:58,  spawnMin:0.95 },
+  { threshold:10, vyBase:46, vyMax:76,  spawnMin:0.72 },
+  { threshold:25, vyBase:58, vyMax:98,  spawnMin:0.52 }
+];
+
+const player = { x:(W - SPR_W)/2, target:null, bounce:0 };
+let items = [], settled = [], puffs = [], pops = [], levelUps = [];
+let score = 0, lives = 3, shake = 0, spawnT = 0, elapsed = 0, level = 1;
+let best = 0;
+try { best = +(localStorage.getItem('petalcatch.best') || 0); } catch(e){}
+
+const input = { left:false, right:false };
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function reset(){
+  player.x = (W - SPR_W)/2; player.target = null; player.bounce = 0;
+  items = []; settled = []; puffs = []; pops = []; levelUps = [];
+  score = 0; lives = 3; shake = 0; spawnT = 0.6; elapsed = 0; level = 1;
+  paintBG(1);
+}
+
+/* ============================================================
+   8.  INPUT  —  three sources, one shared object
+   ============================================================ */
+/* the joystick is a small sprite layered over the (never-changing) shell —
+   only it swaps on tilt, so every input source funnels through setDir(). */
+const joyArt = document.getElementById('joyArt');
+const JOY_SRC = { left:'joy-left.png', center:'joy-middle.png', right:'joy-right.png' };
+Object.values(JOY_SRC).forEach(src => { const pre = new Image(); pre.src = src; }); // avoid flicker on first tilt
+
+function setDir(dir){
+  input.left  = dir === 'left';
+  input.right = dir === 'right';
+  if (dir) player.target = null;
+  stickEl.classList.toggle('held', !!dir);
+  stickEl.setAttribute('aria-valuenow', dir === 'left' ? -1 : dir === 'right' ? 1 : 0);
+  joyArt.src = JOY_SRC[dir === 'left' ? 'left' : dir === 'right' ? 'right' : 'center'];
+}
+
+const KEYS_L = ['ArrowLeft','a','A'], KEYS_R = ['ArrowRight','d','D'];
+const keyState = { left:false, right:false };
+function keyDir(){ return keyState.left ? 'left' : keyState.right ? 'right' : null; }
+addEventListener('keydown', e => {
+  if (KEYS_L.includes(e.key)){ keyState.left  = true; setDir(keyDir()); e.preventDefault(); }
+  if (KEYS_R.includes(e.key)){ keyState.right = true; setDir(keyDir()); e.preventDefault(); }
+  if (e.key === ' ' || e.key === 'Enter'){
+    if (state !== PLAY && !overlay){ e.preventDefault(); begin(); }
+  }
+});
+addEventListener('keyup', e => {
+  if (KEYS_L.includes(e.key)){ keyState.left  = false; setDir(keyDir()); }
+  if (KEYS_R.includes(e.key)){ keyState.right = false; setDir(keyDir()); }
+});
+
+/* joystick hit-zone: press the left or right half, over the drawn joystick */
+const stickEl = document.getElementById('stick');
+function dirFromEvent(e){
+  const r = stickEl.getBoundingClientRect();
+  return (e.clientX - r.left) < r.width / 2 ? 'left' : 'right';
+}
+let stickDown = false;
+stickEl.addEventListener('pointerdown', e => {
+  stickDown = true;
+  stickEl.setPointerCapture(e.pointerId);
+  setDir(dirFromEvent(e));
+  e.preventDefault();
+});
+stickEl.addEventListener('pointermove', e => { if (stickDown) setDir(dirFromEvent(e)); });
+function stickRelease(){ if (stickDown){ stickDown = false; setDir(null); } }
+stickEl.addEventListener('pointerup', stickRelease);
+stickEl.addEventListener('pointercancel', stickRelease);
+stickEl.addEventListener('pointerleave', stickRelease);
+
+stickEl.addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft'){ setDir('left'); e.preventDefault(); }
+  if (e.key === 'ArrowRight'){ setDir('right'); e.preventDefault(); }
+});
+stickEl.addEventListener('keyup', e => {
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight'){ setDir(null); }
+});
+
+/* drag / point anywhere on the screen */
+let dragging = false;
+function aim(e){
+  const r = cv.getBoundingClientRect();
+  player.target = ((e.clientX - r.left) / r.width) * W - SPR_W/2;
+}
+cv.style.touchAction = 'none';
+cv.addEventListener('pointerdown', e => { if (state===PLAY){ dragging = true; cv.setPointerCapture(e.pointerId); aim(e);} });
+cv.addEventListener('pointermove', e => { if (dragging && state===PLAY) aim(e); });
+cv.addEventListener('pointerup',   () => { dragging = false; });
+cv.addEventListener('pointercancel',() => { dragging = false; });
+
+/* ============================================================
+   9.  SCREEN SWITCHING
+   ============================================================ */
+const viewStart = document.getElementById('viewStart');
+const viewOver  = document.getElementById('viewOver');
+const viewFaces = document.getElementById('viewFaces');
+const viewCrop  = document.getElementById('viewCrop');
+let overlay = null;                       // null | 'faces' | 'crop'
+
+/* audio: looping bg music starting from the very first tap/click/key on the
+   page (title screen included), a one-shot sting on game over. Browsers
+   block audio until a real user gesture, so it can't autoplay the instant
+   the page loads — this listens for that first gesture, wherever it lands,
+   and starts the music right then instead of waiting for the Start button. */
+const sfxBg   = document.getElementById('sfxBg');
+const sfxOver = document.getElementById('sfxOver');
+sfxBg.volume = 0.5;
+function stopBgMusic(){ sfxBg.pause(); sfxBg.currentTime = 0; }
+function startBgMusicOnce(){
+  if (!sfxBg.paused) return;
+  sfxBg.play().catch(() => {});
+}
+['pointerdown','keydown'].forEach(ev => addEventListener(ev, startBgMusicOnce, { once:true }));
+
+/* one delegated listener covers every button, including the face-slot
+   buttons that get created dynamically later — nothing to re-wire per
+   button. The joystick is drag-based, not a discrete click, so it's
+   deliberately not a <button> and never triggers this. */
+const sfxClick = document.getElementById('sfxClick');
+document.addEventListener('click', e => {
+  if (!e.target.closest('button')) return;
+  sfxClick.currentTime = 0;
+  sfxClick.play().catch(() => {});
+});
+
+function show(){
+  viewFaces.classList.toggle('on', overlay === 'faces');
+  viewCrop .classList.toggle('on', overlay === 'crop');
+  viewStart.classList.toggle('on', !overlay && state === START);
+  viewOver .classList.toggle('on', !overlay && state === OVER);
+}
+function begin(){
+  if (overlay) return;
+  reset(); state = PLAY; show();
+  startBgMusicOnce();          // in case Start was itself the first gesture
+}
+function gameOver(){
+  state = OVER;
+  stopBgMusic();
+  sfxOver.currentTime = 0;
+  sfxOver.play().catch(() => {});
+  if (score > best){ best = score; try{ localStorage.setItem('petalcatch.best', best); }catch(e){} }
+  document.getElementById('finalScore').textContent = score;
+  document.getElementById('bestScore').textContent  = 'BEST ' + best;
+  show();
+}
+document.getElementById('btnStart').addEventListener('click', begin);
+document.getElementById('btnAgain').addEventListener('click', begin);
+
+/* B button: one universal "back" step, same order a menu stack would unwind. */
+function back(){
+  if (overlay === 'crop'){ overlay = 'faces'; show(); return; }
+  if (overlay === 'faces'){ overlay = null; show(); return; }
+  if (state === PLAY){ stopBgMusic(); state = START; show(); return; }
+  if (state === OVER){ state = START; show(); return; }
+}
+document.getElementById('btnB').addEventListener('click', back);
+
+/* ---------- faces picker ---------- */
+const slotsEl   = document.getElementById('slots');
+const segEl     = document.getElementById('seg');       // inside the faces-upload overlay
+const segStart  = document.getElementById('segStart');  // on the title screen itself
+const btnFacesEl = document.getElementById('btnFaces');
+const hintEl  = document.getElementById('facesHint');
+const fileEl  = document.getElementById('filePick');
+const SLOTS   = 5;
+let activeSlot = 0;
+
+for (let i = 0; i < SLOTS; i++){
+  const b = document.createElement('button');
+  b.className = 'slot'; b.textContent = '+';
+  b.setAttribute('aria-label', 'Add photo to slot ' + (i+1));
+  b.addEventListener('click', () => { activeSlot = i; fileEl.value = ''; fileEl.click(); });
+  slotsEl.appendChild(b);
+}
+
+/* Two segment controls (title screen + faces overlay) share one deckMode —
+   picking FLOWERS/EGGS/FACES on either updates both in lockstep. Choosing
+   FACES on the title screen doesn't require an upload to exist yet, unlike
+   the overlay's version further down the flow — it's what surfaces the
+   "+ ADD FACES" button that opens the upload picker in the first place. */
+function paintSlots(){
+  [...slotsEl.children].forEach((b, i) => {
+    const sp = custom[i];
+    b.classList.toggle('full', !!sp);
+    b.innerHTML = '';
+    if (sp){
+      const c = document.createElement('canvas');
+      c.width = sp.w; c.height = sp.h;
+      const g = c.getContext('2d');
+      const srcW = sp.c.naturalWidth  || sp.c.width;
+      const srcH = sp.c.naturalHeight || sp.c.height;
+      g.imageSmoothingEnabled = srcW !== sp.w || srcH !== sp.h;
+      g.drawImage(sp.c, 0, 0, srcW, srcH, 0, 0, sp.w, sp.h);
+      b.appendChild(c);
+    } else b.textContent = '+';
+  });
+  [...segEl.children].forEach(b => {
+    b.disabled = (b.dataset.m === 'faces') && !custom.length;
+    b.classList.toggle('sel', b.dataset.m === deckMode);
+  });
+  [...segStart.children].forEach(b => {
+    b.classList.toggle('sel', b.dataset.m === deckMode);
+  });
+  btnFacesEl.hidden = deckMode !== 'faces';
+}
+function setMode(m){
+  deckMode = m;
+  paintSlots();
+}
+segEl.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b || b.disabled) return;
+  setMode(b.dataset.m);
+});
+segStart.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  setMode(b.dataset.m);
+});
+
+fileEl.addEventListener('change', async () => {
+  const f = fileEl.files && fileEl.files[0];
+  if (!f) return;
+  hintEl.textContent = 'READING PHOTO...';
+  try { openCrop(await loadFile(f)); hintEl.textContent = 'TAP A SLOT TO ADD A PHOTO'; }
+  catch (err){ hintEl.textContent = "COULDN'T READ THAT FILE — TRY A JPG OR PNG"; }
+});
+
+/* ---------- framing interaction ---------- */
+let panning = false, lastX = 0, lastY = 0;
+function toLocal(e){
+  const r = cropCv.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * CW, y: (e.clientY - r.top) / r.height * CH };
+}
+cropCv.addEventListener('pointerdown', e => {
+  panning = true; cropCv.setPointerCapture(e.pointerId);
+  const p = toLocal(e); lastX = p.x; lastY = p.y;
+});
+cropCv.addEventListener('pointermove', e => {
+  if (!panning) return;
+  const p = toLocal(e);
+  crop.x += p.x - lastX; crop.y += p.y - lastY;
+  lastX = p.x; lastY = p.y;
+  drawCrop();
+});
+['pointerup','pointercancel'].forEach(ev => cropCv.addEventListener(ev, () => { panning = false; }));
+cropCv.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = document.getElementById('zoomR');
+  r.value = Math.max(100, Math.min(450, +r.value - e.deltaY * 0.25));
+  crop.zoom = +r.value / 100;
+  drawCrop();
+}, { passive:false });
+
+document.getElementById('zoomR').addEventListener('input', e => {
+  crop.zoom = +e.target.value / 100;
+  drawCrop();
+});
+document.getElementById('cropCancel').addEventListener('click', () => { overlay = 'faces'; show(); });
+document.getElementById('cropOk').addEventListener('click', () => {
+  custom[activeSlot] = buildOvalSprite();
+  deckMode = 'faces';
+  hintEl.textContent = 'HEAD ADDED — TAP IT AGAIN TO REFRAME';
+  overlay = 'faces'; paintSlots(); show();
+});
+
+document.getElementById('btnFaces').addEventListener('click', () => { overlay = 'faces'; paintSlots(); show(); });
+document.getElementById('btnFacesDone').addEventListener('click', () => { overlay = null; show(); });
+paintSlots();
+
+/* ============================================================
+   10.  UPDATE
+   ============================================================ */
+function spawn(){
+  const pool = deck();
+  const sp = pool[(Math.random()*pool.length)|0];
+  const cfg = LEVELS[level - 1];
+  items.push({
+    sp, x: 4 + Math.random()*(W - 8 - sp.w), y: -sp.h,
+    vy: cfg.vyBase + Math.random()*(cfg.vyMax - cfg.vyBase),
+    sway: 6 + Math.random()*10,
+    phase: Math.random()*6.28
+  });
+}
+
+/* crossing a score threshold bumps the level a fixed step (no smooth ramp),
+   re-bakes the sky palette, and drops a LEVEL UP banner in the same spot
+   the +1 catch popup uses. */
+function checkLevelUp(){
+  const next = level < LEVELS.length && score >= LEVELS[level].threshold ? level + 1 : level;
+  if (next === level) return;
+  level = next;
+  paintBG(level);
+  levelUps.push({ x: W/2, y: H/2 - 20, t: 0 });
+}
+
+function update(dt){
+  elapsed += dt;
+
+  // clouds always drift, on every screen
+  clouds.forEach(c => { c.x -= c.v * dt; if (c.x < -14*c.s) c.x = W + 10; });
+
+  if (state !== PLAY){
+    if (player.bounce > 0) player.bounce = Math.max(0, player.bounce - dt*40);
+    return;
+  }
+
+  /* --- move --- */
+  const SPEED = 108;
+  if (input.left)  player.x -= SPEED * dt;
+  if (input.right) player.x += SPEED * dt;
+  if (player.target !== null){
+    player.x += (player.target - player.x) * Math.min(1, dt * 13);
+  }
+  player.x = Math.max(-4, Math.min(W - SPR_W + 4, player.x));
+
+  /* --- spawn --- */
+  spawnT -= dt;
+  if (spawnT <= 0){
+    spawn();
+    spawnT = LEVELS[level - 1].spawnMin * (0.75 + Math.random()*0.5);
+  }
+
+  /* --- hitbox, in world space --- */
+  const box = {
+    x: player.x + CATCH.ox, y: PLAYER_Y + CATCH.oy,
+    w: CATCH.w, h: CATCH.h
+  };
+
+  /* --- items --- */
+  for (let i = items.length - 1; i >= 0; i--){
+    const it = items[i], sp = it.sp;
+    it.y += it.vy * dt;
+    it.phase += dt * 2.2;
+    const px = it.x + Math.sin(it.phase) * it.sway * 0.28 + sp.w/2;  // bottom-CENTRE
+    const py = it.y + sp.h;                                          // bottom edge
+
+    if (px > box.x && px < box.x + box.w && py > box.y && py < box.y + box.h){
+      items.splice(i,1);
+      score++;
+      checkLevelUp();
+      player.bounce = 3;
+      // settle it into the basket, remembered as an offset from the player
+      settled.push({
+        sp,
+        ox: 4 + Math.random()*(SPR_W - 8 - sp.w),  // stays inside the bowl silhouette
+        oy: (58 - sp.h) + Math.random()*4,         // half-sunk: top peeks over the weave
+        fromY: py - PLAYER_Y - sp.h,
+        t: 0
+      });
+      if (settled.length > 6) settled.shift();
+      pops.push({ x: px, y: box.y - 4, t: 0 });
+      for (let k=0;k<7;k++){
+        puffs.push({ x:px, y:box.y, vx:(Math.random()-.5)*44, vy:-24-Math.random()*32,
+                     t:0, life:.42, col: k%2 ? P.sun : sp.tint });
+      }
+      continue;
+    }
+    if (it.y + sp.h > MISS_Y + 8){
+      items.splice(i,1);
+      lives--;
+      if (!REDUCED) shake = 4;
+      for (let k=0;k<6;k++){
+        puffs.push({ x:it.x+sp.w/2, y:MISS_Y+4, vx:(Math.random()-.5)*54, vy:-16-Math.random()*22,
+                     t:0, life:.34, col:P.pine });
+      }
+      if (lives <= 0){ gameOver(); return; }
+    }
+  }
+
+  /* --- effects --- */
+  settled.forEach(s => { if (s.t < 1) s.t = Math.min(1, s.t + dt*6); });
+  for (let i = puffs.length-1; i>=0; i--){
+    const p = puffs[i];
+    p.t += dt; p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 190*dt;
+    if (p.t > p.life) puffs.splice(i,1);
+  }
+  for (let i = pops.length-1; i>=0; i--){
+    pops[i].t += dt; pops[i].y -= dt*22;
+    if (pops[i].t > 0.7) pops.splice(i,1);
+  }
+  for (let i = levelUps.length-1; i>=0; i--){
+    levelUps[i].t += dt; levelUps[i].y -= dt*10;
+    if (levelUps[i].t > 1.6) levelUps.splice(i,1);
+  }
+  if (player.bounce > 0) player.bounce = Math.max(0, player.bounce - dt*34);
+  if (shake > 0) shake = Math.max(0, shake - dt*20);
+}
+
+/* ============================================================
+   11.  DRAW
+   ============================================================ */
+/* The depth trick, in three draws:
+     body  ->  anything in or near the basket  ->  the woven front face.
+   Because the front is its own layer with a real curved silhouette, flowers
+   sink behind the actual weave line instead of behind a guessed rectangle. */
+function drawBody(px, py){
+  if (charReady) ctx.drawImage(charImg, px, py);
+}
+function drawSettled(px, py){
+  settled.forEach(s => {
+    const ease = 1 - Math.pow(1 - s.t, 3);
+    const y = py + s.fromY + (s.oy - s.fromY) * ease;
+    if (s.sp.isPhoto) ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(s.sp.c, Math.round(px + s.ox), Math.round(y), s.sp.w, s.sp.h);
+    if (s.sp.isPhoto) ctx.imageSmoothingEnabled = false;
+  });
+}
+function drawBasketFront(px, py){
+  if (frontReady) ctx.drawImage(frontImg, px, py + FRONT_Y);
+}
+
+function drawHUD(){
+  text(ctx, String(score).padStart(3,'0'), 6, 6, P.ink, 2);
+  text(ctx, String(score).padStart(3,'0'), 5, 5, P.white, 2);
+  text(ctx, 'LV' + level, 6, 22, P.ink, 1);
+  text(ctx, 'LV' + level, 5, 21, P.sun, 1);
+  for (let i=0;i<3;i++){
+    ctx.drawImage(i < lives ? HEART_FULL : HEART_GONE, W - 8 - (3-i)*9, 6);
+  }
+}
+
+let DEBUG = false;
+function render(){
+  ctx.save();
+  if (shake > 0.2){
+    ctx.translate((Math.random()-.5)*shake, (Math.random()-.5)*shake*0.6);
+  }
+
+  ctx.drawImage(bg.c, 0, 0);
+  clouds.forEach(c => ctx.drawImage(cloudImg, 0,0,12,6,
+                                    Math.round(c.x), c.y, (12*c.s)/STRETCH_X, 6*c.s));
+
+  const px = Math.round(player.x);
+  const py = Math.round(PLAYER_Y + player.bounce);
+
+  // character (+ basket contents + front weave) drawn a bit bigger for
+  // presence — scaled around the feet so it still stands on the ground
+  // line. The catch hitbox is computed outside this transform in update(),
+  // so gameplay feel doesn't shift with the art.
+  const CHAR_SCALE = 1.12;
+  const anchorX = px + SPR_W / 2, anchorY = py + SPR_H;
+  function withCharScale(draw){
+    ctx.save();
+    ctx.translate(anchorX, anchorY);
+    ctx.scale(CHAR_SCALE, CHAR_SCALE);
+    ctx.translate(-anchorX, -anchorY);
+    draw();
+    ctx.restore();
+  }
+  withCharScale(() => drawBody(px, py));
+
+  // falling flowers pass in front of the body, drawn at sp.w/sp.h — which
+  // for faces is smaller than the sprite's own bitmap, so a bit of headroom
+  // resolution survives the canvas's nearest-neighbour CSS stretch without
+  // making the item itself oversized next to the basket.
+  items.forEach(it => {
+    const x = Math.round(it.x + Math.sin(it.phase) * it.sway * 0.28);
+    if (it.sp.isPhoto) ctx.imageSmoothingEnabled = true;
+    ctx.globalAlpha = 0.25;
+    ctx.drawImage(it.sp.c, x, Math.round(it.y)+2, it.sp.w, it.sp.h);   // soft trail
+    ctx.globalAlpha = 1;
+    ctx.drawImage(it.sp.c, x, Math.round(it.y), it.sp.w, it.sp.h);
+    if (it.sp.isPhoto) ctx.imageSmoothingEnabled = false;
+  });
+
+  withCharScale(() => {
+    drawSettled(px, py);        // ...and caught ones rest inside...
+    drawBasketFront(px, py);    // ...until the weave closes over both.
+  });
+
+  puffs.forEach(p => {
+    ctx.fillStyle = p.col;
+    ctx.globalAlpha = 1 - p.t/p.life;
+    ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2);
+  });
+  ctx.globalAlpha = 1;
+
+  pops.forEach(p => {
+    ctx.globalAlpha = Math.max(0, 1 - p.t/0.7);
+    text(ctx, '+1', Math.round(p.x)-3, Math.round(p.y), P.ink, 1);
+    text(ctx, '+1', Math.round(p.x)-4, Math.round(p.y)-1, P.sun, 1);
+    ctx.globalAlpha = 1;
+  });
+
+  levelUps.forEach(p => {
+    const fadeIn  = Math.min(1, p.t/0.25);
+    const fadeOut = Math.max(0, 1 - Math.max(0, p.t-1.1)/0.5);
+    ctx.globalAlpha = fadeIn * fadeOut;
+    const s = 'LEVEL ' + level;
+    const x = Math.round(p.x - textW(s,2)/2);
+    const y = Math.round(p.y);
+    text(ctx, s, x+1, y+1, P.ink, 2);
+    text(ctx, s, x, y, P.sun, 2);
+    ctx.globalAlpha = 1;
+  });
+
+  if (state === PLAY) drawHUD();
+
+  if (DEBUG){
+    ctx.strokeStyle = P.red; ctx.lineWidth = 1;
+    ctx.strokeRect(player.x + CATCH.ox + .5, PLAYER_Y + CATCH.oy + .5, CATCH.w, CATCH.h);
+    ctx.strokeStyle = P.sky;
+    ctx.beginPath(); ctx.moveTo(0, MISS_Y+.5); ctx.lineTo(W, MISS_Y+.5); ctx.stroke();
+  }
+  ctx.restore();
+}
+addEventListener('keydown', e => { if (e.key === '`') DEBUG = !DEBUG; });
+
+/* ============================================================
+   12.  LOOP
+   ============================================================ */
+let last = performance.now();
+function frame(now){
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
