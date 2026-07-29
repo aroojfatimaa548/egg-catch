@@ -35,6 +35,28 @@
     background-size:cover; background-position:center; background-repeat:no-repeat;
     transition:opacity 1s ease-in-out;
   }
+
+  /* background picker: small square swatches pinned to the right edge of
+     the viewport, always visible, sitting over the default backdrop. */
+  .bg-picker{
+    position:fixed; right:14px; top:50%; transform:translateY(-50%);
+    display:flex; flex-direction:column; gap:8px; z-index:5;
+  }
+  .bg-swatch{
+    width:48px; height:48px; padding:0; border-radius:8px; cursor:pointer;
+    background-size:cover; background-position:center;
+    box-shadow:0 0 0 2px var(--ink), 0 0 0 4px rgba(255,255,255,.5);
+  }
+  .bg-swatch.sel{box-shadow:0 0 0 2px var(--ink), 0 0 0 4px var(--leaf)}
+  .bg-swatch:focus-visible{outline:3px solid var(--leaf); outline-offset:2px}
+  @media (max-width: 480px){
+    .bg-picker{
+      right:auto; left:50%; top:10px; transform:translateX(-50%);
+      flex-direction:row; gap:6px;
+    }
+    .bg-swatch{width:26px; height:26px; border-radius:5px}
+  }
+
   #stage{position:relative}
   #console{
     position:absolute; top:0; left:0;
@@ -86,14 +108,26 @@
   }
   .view.on{display:flex}
 
-  .view.start{background:rgba(24,20,37,.62)}
-  .kicker{font-size:5px; color:var(--leaf); letter-spacing:2px; margin-bottom:9px}
+  .view.start{background:rgba(24,20,37,.62); justify-content:flex-start; padding-top:28px}
+  .kicker{font-size:5px; color:var(--leaf); letter-spacing:2px; margin-bottom:6px}
   .title{
     font-size:19px; line-height:1.15; color:var(--shell-hi); letter-spacing:1px;
     text-shadow:0 3px 0 var(--shell-deep), 0 5px 0 var(--ink);
-    margin-bottom:6px;
+    margin-bottom:16px;
   }
-  .sub{font-size:5.5px; line-height:2; color:var(--cream); letter-spacing:1px; margin-bottom:20px}
+  .name-input{
+    font-family:inherit; font-size:6px; letter-spacing:1px; text-align:center;
+    color:var(--cream); background:rgba(38,43,68,.55);
+    border:0; padding:7px 6px; margin-bottom:14px; width:96px;
+    box-shadow:none;
+  }
+  .name-input::placeholder{color:#5a6377}
+  .name-input:focus{outline:none; box-shadow:0 3px 0 2px var(--leaf)}
+  .name-input.flicker{animation:name-flicker .5s steps(1,end) 3}
+  @keyframes name-flicker{
+    0%,100%{box-shadow:none}
+    25%,75%{box-shadow:0 3px 0 2px var(--btn-a)}
+  }
 
   .press{
     font-family:inherit; font-size:8px; letter-spacing:1px; cursor:pointer;
@@ -215,6 +249,13 @@
 <div class="bg-frame" id="bgA" style="opacity:1"></div>
 <div class="bg-frame" id="bgB" style="opacity:0"></div>
 
+<div class="bg-picker" id="bgPicker">
+  <button class="bg-swatch sel" data-bg="animated" style="background-image:url('bg-thumb-0.png')" aria-label="Animated background" title="Animated"></button>
+  <button class="bg-swatch" data-bg="0" style="background-image:url('bg-thumb-1.png')" aria-label="Sunset city background" title="Sunset city"></button>
+  <button class="bg-swatch" data-bg="1" style="background-image:url('bg-thumb-2.png')" aria-label="Meadow background" title="Meadow"></button>
+  <button class="bg-swatch" data-bg="2" style="background-image:url('bg-thumb-3.png')" aria-label="Night city background" title="Night city"></button>
+</div>
+
 <div id="stage">
   <div id="console">
     <img class="shell-art" id="shellArt" src="shell-body.png" alt="" draggable="false">
@@ -226,7 +267,7 @@
       <div class="view start on" id="viewStart">
         <div class="kicker">A ONE-BASKET GAME</div>
         <div class="title">EGG<br>CATCH</div>
-        <div class="sub">CATCH THE FLOWERS<br>MISS THREE AND IT ENDS</div>
+        <input class="name-input" id="nameInput" type="text" placeholder="YOUR NAME" maxlength="12" autocomplete="off">
         <div class="seg" id="segStart">
           <button data-m="flowers" class="sel">FLOWERS</button>
           <button data-m="eggs">EGGS</button>
@@ -343,21 +384,62 @@ function makeCanvas(w, h){
   return { c, g };
 }
 
-/* ---------- animated backdrop, 3 star-twinkle frames crossfading ---------- */
-const BG_FRAMES = ['bg-motion-1.png', 'bg-motion-2.png', 'bg-motion-3.png'];
+/* ---------- backdrop: default animated star-twinkle crossfade, or one of
+   3 static scenes picked from the swatches on the right edge ---------- */
+const BG_FRAMES  = ['bg-motion-1.png', 'bg-motion-2.png', 'bg-motion-3.png'];
+const BG_STATICS = ['bg-static-1.png', 'bg-static-2.png', 'bg-static-3.png'];
 const bgA = document.getElementById('bgA');
 const bgB = document.getElementById('bgB');
+const bgPicker = document.getElementById('bgPicker');
 BG_FRAMES.forEach(src => { const pre = new Image(); pre.src = src; }); // preload, avoid a flash on first swap
-bgA.style.backgroundImage = `url('${BG_FRAMES[0]}')`;   // frame 0 shown immediately (opacity:1 in HTML)
-let bgIdx = 0, bgShowingA = true;
-setInterval(() => {
-  bgIdx = (bgIdx + 1) % BG_FRAMES.length;
-  const incoming = bgShowingA ? bgB : bgA;       // the currently-hidden layer becomes the next frame
-  incoming.style.backgroundImage = `url('${BG_FRAMES[bgIdx]}')`;
+BG_STATICS.forEach(src => { const pre = new Image(); pre.src = src; });
+
+let bgMode = 'animated';           // 'animated' | 0 | 1 | 2 (index into BG_STATICS)
+try { bgMode = localStorage.getItem('petalcatch.bg') || 'animated'; } catch(e){}
+if (bgMode !== 'animated') bgMode = +bgMode;
+
+let bgIdx = 0, bgShowingA = true, bgTimer = null;
+
+function paintStatic(src){
+  const incoming = bgShowingA ? bgB : bgA;
+  incoming.style.backgroundImage = `url('${src}')`;
   bgA.style.opacity = bgShowingA ? '0' : '1';
   bgB.style.opacity = bgShowingA ? '1' : '0';
   bgShowingA = !bgShowingA;
-}, 1000);
+}
+function startAnimatedBg(){
+  if (bgTimer) return;
+  bgTimer = setInterval(() => {
+    bgIdx = (bgIdx + 1) % BG_FRAMES.length;
+    paintStatic(BG_FRAMES[bgIdx]);
+  }, 1000);
+}
+function stopAnimatedBg(){
+  if (bgTimer){ clearInterval(bgTimer); bgTimer = null; }
+}
+function applyBgMode(){
+  [...bgPicker.children].forEach(b => {
+    b.classList.toggle('sel', b.dataset.bg === String(bgMode));
+  });
+  if (bgMode === 'animated'){
+    paintStatic(BG_FRAMES[bgIdx]);
+    startAnimatedBg();
+  } else {
+    stopAnimatedBg();
+    paintStatic(BG_STATICS[bgMode]);
+  }
+}
+bgA.style.backgroundImage = `url('${bgMode === 'animated' ? BG_FRAMES[0] : BG_STATICS[bgMode]}')`;
+if (bgMode === 'animated') startAnimatedBg();
+[...bgPicker.children].forEach(b => b.classList.toggle('sel', b.dataset.bg === String(bgMode)));
+
+bgPicker.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  bgMode = b.dataset.bg === 'animated' ? 'animated' : +b.dataset.bg;
+  try{ localStorage.setItem('petalcatch.bg', String(bgMode)); }catch(e2){}
+  applyBgMode();
+});
 
 /* ============================================================
    2.  RESPONSIVE SCALING
@@ -734,8 +816,11 @@ const LEVELS = [
 const player = { x:(W - SPR_W)/2, target:null, bounce:0 };
 let items = [], settled = [], puffs = [], pops = [], levelUps = [];
 let score = 0, lives = 3, shake = 0, spawnT = 0, elapsed = 0, level = 1;
-let best = 0;
-try { best = +(localStorage.getItem('petalcatch.best') || 0); } catch(e){}
+let best = 0, playerName = '';
+try {
+  best = +(localStorage.getItem('petalcatch.best') || 0);
+  playerName = localStorage.getItem('petalcatch.name') || '';
+} catch(e){}
 
 const input = { left:false, right:false };
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -769,6 +854,7 @@ const KEYS_L = ['ArrowLeft','a','A'], KEYS_R = ['ArrowRight','d','D'];
 const keyState = { left:false, right:false };
 function keyDir(){ return keyState.left ? 'left' : keyState.right ? 'right' : null; }
 addEventListener('keydown', e => {
+  if (document.activeElement === nameInput) return;   // typing a name shouldn't drive gameplay
   if (KEYS_L.includes(e.key)){ keyState.left  = true; setDir(keyDir()); e.preventDefault(); }
   if (KEYS_R.includes(e.key)){ keyState.right = true; setDir(keyDir()); e.preventDefault(); }
   if (e.key === ' ' || e.key === 'Enter'){
@@ -862,6 +948,13 @@ function show(){
 }
 function begin(){
   if (overlay) return;
+  if (state === START && !playerName){
+    nameInput.classList.remove('flicker');
+    void nameInput.offsetWidth;         // restart the animation if it's already mid-flicker
+    nameInput.classList.add('flicker');
+    nameInput.focus();
+    return;
+  }
   reset(); state = PLAY; show();
   startBgMusicOnce();          // in case Start was itself the first gesture
 }
@@ -872,9 +965,15 @@ function gameOver(){
   sfxOver.play().catch(() => {});
   if (score > best){ best = score; try{ localStorage.setItem('petalcatch.best', best); }catch(e){} }
   document.getElementById('finalScore').textContent = score;
-  document.getElementById('bestScore').textContent  = 'BEST ' + best;
+  document.getElementById('bestScore').textContent  = (playerName ? playerName.toUpperCase() + "'S " : '') + 'BEST ' + best;
   show();
 }
+const nameInput = document.getElementById('nameInput');
+nameInput.value = playerName;
+nameInput.addEventListener('input', () => {
+  playerName = nameInput.value.trim();
+  try{ localStorage.setItem('petalcatch.name', playerName); }catch(e){}
+});
 document.getElementById('btnStart').addEventListener('click', begin);
 document.getElementById('btnAgain').addEventListener('click', begin);
 
