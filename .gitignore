@@ -1,5 +1,5 @@
 # Ignore everything by default, then explicitly allow the files the game
-# actually loads (petal-catch-yellow-shell.html and its referenced assets).
+# actually loads (index.html and its referenced assets).
 # This keeps large unused source/original images out of the repo without
 # having to list every one of them by name.
 *
@@ -7,7 +7,7 @@
 # ...except these
 !.gitignore
 !CLAUDE.md
-!petal-catch-yellow-shell.html
+!index.html
 
 !cursor-wings.png
 !shell-body.png
