@@ -424,7 +424,14 @@ window.submitScore = async function submitScore(name, score){
     console.warn('submitScore: score out of sane range, not submitting', numScore);
     return;
   }
-  const cleanName = (name || '').slice(0, 40).trim() || 'ANONYMOUS';
+  // Normalise once, use this exact value for every call below (select,
+  // update, insert) — the bug was the select and update paths ending up
+  // with differently-cased names ("rooj" vs "ROOJ"), so the update's
+  // .eq('name', ...) matched 0 rows even though the row genuinely existed.
+  // Uppercase to match the display convention used everywhere else
+  // (playerName.toUpperCase() in the HUD/leaderboard), so a name typed as
+  // "rooj" always resolves to the same stored row as "ROOJ".
+  const cleanName = ((name || '').slice(0, 40).trim() || 'ANONYMOUS').toUpperCase();
   try {
     const { data: existing, error: selectError } = await supabase
       .from('scores')
