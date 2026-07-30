@@ -213,13 +213,42 @@
   /* game over card */
   .view.over{background:rgba(24,20,37,.78)}
   .card{
-    background:var(--ink2); border-radius:0; padding:16px 14px;
+    background:var(--ink2); border-radius:0; padding:14px 14px 12px;
     box-shadow:0 0 0 3px var(--ink), 0 6px 0 rgba(0,0,0,.4);
+    width:100%; max-width:145px;
   }
-  .over-t{font-size:11px; color:var(--btn-a); letter-spacing:1px; margin-bottom:14px}
-  .over-l{font-size:5px; color:#8b9bb4; letter-spacing:1.5px; margin-bottom:6px}
-  .over-n{font-size:24px; color:var(--shell-hi); margin-bottom:4px}
-  .over-best{font-size:5px; color:var(--leaf); letter-spacing:1px; margin-bottom:16px}
+  .over-t{font-size:11px; color:var(--btn-a); letter-spacing:1px; margin-bottom:10px}
+  .over-l{font-size:5px; color:#8b9bb4; letter-spacing:1.5px; margin-bottom:5px}
+  .over-n{font-size:22px; color:var(--shell-hi); margin-bottom:3px}
+  .over-best{font-size:5px; color:var(--leaf); letter-spacing:1px; margin-bottom:10px}
+
+  /* leaderboard — top scores fetched from Supabase, styled to match the
+     rest of the game-over card rather than routed through the canvas
+     bitmap font (that font has no lowercase/full alphabet, and this is a
+     DOM overlay screen like the rest of .view.over, not canvas-drawn). */
+  .leaderboard{
+    background:var(--ink); box-shadow:inset 0 0 0 2px var(--slate);
+    padding:7px 8px 6px; margin-bottom:12px; text-align:left;
+  }
+  .lb-t{
+    font-size:5px; color:var(--mist); letter-spacing:1.5px;
+    text-align:center; margin-bottom:6px;
+  }
+  .lb-rows{display:flex; flex-direction:column; gap:3px; min-height:32px}
+  .lb-row{
+    display:flex; align-items:center; gap:5px;
+    font-size:5.5px; letter-spacing:.5px; color:var(--cream);
+  }
+  .lb-rank{color:var(--shell-hi); width:9px; flex:none}
+  .lb-name{
+    flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; color:var(--cream);
+  }
+  .lb-score{color:var(--leaf); flex:none}
+  .lb-status{
+    font-size:5px; color:#5a6377; letter-spacing:1px;
+    text-align:center; width:100%; align-self:center;
+  }
 
   /* ---------- controls ----------
      The joystick is painted into the shell art itself (3 frames: left-leaning,
@@ -306,6 +335,10 @@
           <div class="over-l">FLOWERS</div>
           <div class="over-n" id="finalScore">0</div>
           <div class="over-best" id="bestScore">BEST 0</div>
+          <div class="leaderboard" id="leaderboard">
+            <div class="lb-t">TOP SCORES</div>
+            <div class="lb-rows" id="lbRows"><div class="lb-status">LOADING&hellip;</div></div>
+          </div>
           <button class="press" id="btnAgain">PLAY AGAIN</button>
         </div>
       </div>
@@ -324,6 +357,77 @@
 
   </div>
 </div>
+
+<script type="module">
+// Supabase: score submission only, nothing rendered from it yet.
+// Loaded as its own module so the main game IIFE below can stay plain
+// script/no-build — this just exposes one function on window for it to call.
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const SUPABASE_URL = 'https://tmnbkdujuoblfsmztpzb.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_TaVbLCJxZUWApG4jpvmaTQ_f1It8Ksn';
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Backstop against spoofed/tampered submissions, not a real skill ceiling —
+// see index.html's spawn-rate table (LEVELS) for why this number is generous.
+const MAX_SANE_SCORE = 500;
+
+// Keeps one row per name — the player's best score, not a history of runs.
+// `scores.name` has a unique index, so this is a read-then-write: look up
+// the existing row, then only insert (new name) or update (existing name,
+// but only when this run beat their stored best) — never overwrite a
+// higher score with a lower one. There's a small race window if the same
+// name submits twice at once (both reads can land before either write),
+// which is an acceptable tradeoff for a casual leaderboard rather than
+// standing up a database function for a single-writer upsert.
+window.submitScore = async function submitScore(name, score){
+  if (!Number.isInteger(score) || score < 0 || score > MAX_SANE_SCORE) {
+    console.warn('submitScore: score out of sane range, not submitting', score);
+    return;
+  }
+  const cleanName = (name || '').slice(0, 40).trim() || 'ANONYMOUS';
+  try {
+    const { data: existing, error: selectError } = await supabase
+      .from('scores')
+      .select('score')
+      .eq('name', cleanName)
+      .maybeSingle();
+    if (selectError) { console.error('submitScore lookup failed:', selectError.message); return; }
+
+    if (!existing) {
+      const { error } = await supabase.from('scores').insert({ name: cleanName, score });
+      if (error) console.error('submitScore insert failed:', error.message);
+      return;
+    }
+    if (score <= existing.score) return;   // not a new best, leave the stored row alone
+
+    const { error } = await supabase
+      .from('scores')
+      .update({ score })
+      .eq('name', cleanName);
+    if (error) console.error('submitScore update failed:', error.message);
+  } catch (err) {
+    console.error('submitScore failed:', err);
+  }
+};
+
+// Returns [] on any failure (unreachable DB, missing table, etc) so the
+// leaderboard UI can treat "no data" and "errored" the same way.
+window.fetchTopScores = async function fetchTopScores(limit){
+  try {
+    const { data, error } = await supabase
+      .from('scores')
+      .select('name, score')
+      .order('score', { ascending: false })
+      .limit(limit);
+    if (error) { console.error('fetchTopScores failed:', error.message); return []; }
+    return data || [];
+  } catch (err) {
+    console.error('fetchTopScores failed:', err);
+    return [];
+  }
+};
+</script>
 
 <script>
 (() => {
@@ -958,6 +1062,46 @@ function begin(){
   reset(); state = PLAY; show();
   startBgMusicOnce();          // in case Start was itself the first gesture
 }
+const LEADERBOARD_SIZE = 3;
+const lbRowsEl = document.getElementById('lbRows');
+
+function renderLeaderboard(rows){
+  lbRowsEl.innerHTML = '';
+  if (!rows || !rows.length){
+    const status = document.createElement('div');
+    status.className = 'lb-status';
+    status.textContent = 'NO SCORES YET';
+    lbRowsEl.appendChild(status);
+    return;
+  }
+  rows.forEach((r, i) => {
+    const row = document.createElement('div');
+    row.className = 'lb-row';
+    const rank = document.createElement('span');
+    rank.className = 'lb-rank'; rank.textContent = (i+1) + '.';
+    const name = document.createElement('span');
+    name.className = 'lb-name'; name.textContent = (r.name || 'ANONYMOUS').toUpperCase();
+    const sc = document.createElement('span');
+    sc.className = 'lb-score'; sc.textContent = r.score;
+    row.append(rank, name, sc);
+    lbRowsEl.appendChild(row);
+  });
+}
+
+async function loadLeaderboard(){
+  lbRowsEl.innerHTML = '<div class="lb-status">LOADING&hellip;</div>';
+  if (typeof window.fetchTopScores !== 'function'){
+    lbRowsEl.innerHTML = '<div class="lb-status">UNAVAILABLE</div>';
+    return;
+  }
+  const rows = await window.fetchTopScores(LEADERBOARD_SIZE);
+  // gameOver() may have already moved us off the OVER screen (Play Again
+  // mashed quickly) — don't paint a stale fetch into a screen that's not
+  // showing anymore.
+  if (state !== OVER) return;
+  renderLeaderboard(rows);
+}
+
 function gameOver(){
   state = OVER;
   stopBgMusic();
@@ -967,6 +1111,12 @@ function gameOver(){
   document.getElementById('finalScore').textContent = score;
   document.getElementById('bestScore').textContent  = (playerName ? playerName.toUpperCase() + "'S " : '') + 'BEST ' + best;
   show();
+  lbRowsEl.innerHTML = '<div class="lb-status">LOADING&hellip;</div>';
+  if (typeof window.submitScore === 'function'){
+    window.submitScore(playerName, score).then(loadLeaderboard);
+  } else {
+    loadLeaderboard();
+  }
 }
 const nameInput = document.getElementById('nameInput');
 nameInput.value = playerName;
