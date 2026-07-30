@@ -560,14 +560,19 @@ function makeCanvas(w, h){
 }
 
 /* ---------- backdrop: default animated star-twinkle crossfade, or one of
-   3 static scenes picked from the swatches on the right edge ---------- */
-const BG_FRAMES  = ['bg-motion-1.png', 'bg-motion-2.png', 'bg-motion-3.png'];
-const BG_STATICS = ['bg-static-1.png', 'bg-static-2.png', 'bg-static-3.png'];
+   3 static scenes picked from the swatches on the right edge.
+   WebP instead of PNG — same art, ~90% smaller (each frame was 1.2-1.9MB
+   as PNG, ~90-240KB as WebP@90, no visible quality loss on these soft/
+   painterly scenes). The 3 animated frames still preload eagerly since
+   the default view needs them within a second of load; the 3 static
+   picker options are large and easy to never touch in a session, so they
+   only fetch the first time each one is actually selected. */
+const BG_FRAMES  = ['bg-motion-1.webp', 'bg-motion-2.webp', 'bg-motion-3.webp'];
+const BG_STATICS = ['bg-static-1.webp', 'bg-static-2.webp', 'bg-static-3.webp'];
 const bgA = document.getElementById('bgA');
 const bgB = document.getElementById('bgB');
 const bgPicker = document.getElementById('bgPicker');
 BG_FRAMES.forEach(src => { const pre = new Image(); pre.src = src; }); // preload, avoid a flash on first swap
-BG_STATICS.forEach(src => { const pre = new Image(); pre.src = src; });
 
 let bgMode = 'animated';           // 'animated' | 0 | 1 | 2 (index into BG_STATICS)
 try { bgMode = localStorage.getItem('petalcatch.bg') || 'animated'; } catch(e){}
