@@ -454,18 +454,20 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const MAX_SANE_SCORE = 500;
 
 // Keeps one row per name — the player's best score, not a history of runs.
-// `scores.name` has a unique index, so this is a read-then-write: look up
-// the existing row, then only insert (new name) or update (existing name,
-// but only when this run beat their stored best) — never overwrite a
-// higher score with a lower one. There's a small race window if the same
-// name submits twice at once (both reads can land before either write),
-// which is an acceptable tradeoff for a casual leaderboard rather than
-// standing up a database function for a single-writer upsert.
+// This is now a plain, unconditional upsert on the `name` unique index:
+// the client always sends whatever score this run ended with, no
+// client-side "only if higher" comparison or read-before-write. The
+// previous read-then-write approach kept failing to update existing rows
+// in practice (root cause never fully pinned down — string comparison,
+// name-normalisation mismatches, and a possible RLS policy were all ruled
+// in/out across several passes without a clean repro), so "keep the
+// higher score" is being moved to the database side instead, where it can
+// be enforced as a rule that runs no matter what the client sends. Until
+// that rule is in place, THIS FUNCTION ALONE WILL OVERWRITE A HIGHER
+// STORED SCORE WITH A LOWER ONE — that's expected and intentional; the
+// upsert is deliberately dumb so the database-side rule is the one
+// source of truth.
 window.submitScore = async function submitScore(name, score){
-  // Coerce defensively — `score` should already be a number from the game
-  // loop, but a string ("15") fails Number.isInteger and would have been
-  // silently dropped here, which looks identical to "the update didn't
-  // happen" from the outside. Normalise first, then validate.
   const numScore = typeof score === 'number' ? score : Number(score);
   console.log('submitScore called with', { name, score, numScore, type: typeof score });
 
@@ -473,90 +475,23 @@ window.submitScore = async function submitScore(name, score){
     console.warn('submitScore: score out of sane range, not submitting', numScore);
     return;
   }
-  // Normalise once, use this exact value for every call below (select,
-  // update, insert) — the bug was the select and update paths ending up
-  // with differently-cased names ("rooj" vs "ROOJ"), so the update's
-  // .eq('name', ...) matched 0 rows even though the row genuinely existed.
-  // Uppercase to match the display convention used everywhere else
-  // (playerName.toUpperCase() in the HUD/leaderboard), so a name typed as
-  // "rooj" always resolves to the same stored row as "ROOJ".
   const cleanName = ((name || '').slice(0, 40).trim() || 'ANONYMOUS').toUpperCase();
-  try {
-    const { data: existing, error: selectError } = await supabase
-      .from('scores')
-      .select('score')
-      .eq('name', cleanName)
-      .maybeSingle();
-    if (selectError) { console.error('submitScore lookup failed:', selectError); return; }
-    console.log('submitScore existing row for', cleanName, '=', existing);
 
-    if (!existing) {
-      const { error } = await supabase.from('scores').insert({ name: cleanName, score: numScore });
-      if (error) console.error('submitScore insert failed:', error);
-      else console.log('submitScore inserted new row', { name: cleanName, score: numScore });
-      return;
-    }
+  console.log('submitScore issuing UPSERT', { table: 'scores', row: { name: cleanName, score: numScore }, onConflict: 'name' });
+  const { data, error, status, statusText } = await supabase
+    .from('scores')
+    .upsert({ name: cleanName, score: numScore }, { onConflict: 'name' })
+    .select();
 
-    // existing.score comes back from Postgres as whatever type the column
-    // actually is — if it's a text/varchar column instead of int/numeric,
-    // this arrives as a STRING, and a naive `numScore <= existing.score`
-    // would silently do the wrong thing (string comparison: "141" < "96"
-    // is true, because "1" < "9" lexicographically). Force both sides to
-    // Number explicitly so the comparison is always numeric regardless of
-    // the column's real type.
-    const storedScore = Number(existing.score);
-    console.log('submitScore comparing (raw)', {
-      numScore, numScoreType: typeof numScore,
-      rawExisting: existing.score, rawExistingType: typeof existing.score,
-    });
-    console.log('submitScore comparing (coerced)', {
-      numScore, numScoreType: typeof numScore,
-      storedScore, storedScoreType: typeof storedScore,
-      willUpdate: numScore > storedScore,
-    });
-    if (!(numScore > storedScore)) {
-      console.log('submitScore: not a new best, leaving stored row unchanged');
-      return;
-    }
+  console.log('submitScore UPSERT result', {
+    affectedRowCount: data ? data.length : 0,
+    rows: data,
+    httpStatus: status,
+    httpStatusText: statusText,
+    error: error ? { message: error.message, code: error.code, details: error.details, hint: error.hint } : null,
+  });
 
-    console.log('submitScore issuing UPDATE', { table: 'scores', set: { score: numScore }, whereNameEquals: cleanName });
-    const { data: updated, error, status, statusText } = await supabase
-      .from('scores')
-      .update({ score: numScore })
-      .eq('name', cleanName)
-      .select();
-
-    // Log absolutely everything the client gave us — Supabase/PostgREST
-    // errors carry .code/.details/.hint that a plain console.error(error)
-    // can collapse in some browser consoles, and status/statusText reveal
-    // an RLS-driven 0-row result even when there's no thrown error at all.
-    console.log('submitScore UPDATE result', {
-      affectedRowCount: updated ? updated.length : 0,
-      updatedRows: updated,
-      httpStatus: status,
-      httpStatusText: statusText,
-      error: error ? { message: error.message, code: error.code, details: error.details, hint: error.hint } : null,
-    });
-
-    if (error) {
-      console.error('submitScore update failed:', error.message, error);
-    } else if (!updated || updated.length === 0) {
-      // No error, but nothing matched. Either cleanName doesn't
-      // byte-for-byte match what's stored, or (very commonly on Supabase)
-      // a Row Level Security UPDATE policy is silently filtering the row
-      // out of this statement's visibility — RLS failures do not raise a
-      // JS error, they just make the write affect 0 rows. If the row
-      // logged above ("submitScore existing row for X = {...}") clearly
-      // exists but this still shows 0 affected rows, RLS is the prime
-      // suspect and needs a policy change in the Supabase dashboard
-      // (something this code cannot inspect or fix on its own).
-      console.error('submitScore update matched 0 rows for name:', JSON.stringify(cleanName), '— check RLS UPDATE policy on scores table if the row visibly exists');
-    } else {
-      console.log('submitScore updated row', updated);
-    }
-  } catch (err) {
-    console.error('submitScore failed:', err);
-  }
+  if (error) console.error('submitScore upsert failed:', error.message, error);
 };
 
 // Returns [] on any failure (unreachable DB, missing table, etc) so the
