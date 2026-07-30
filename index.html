@@ -413,8 +413,15 @@ const MAX_SANE_SCORE = 500;
 // which is an acceptable tradeoff for a casual leaderboard rather than
 // standing up a database function for a single-writer upsert.
 window.submitScore = async function submitScore(name, score){
-  if (!Number.isInteger(score) || score < 0 || score > MAX_SANE_SCORE) {
-    console.warn('submitScore: score out of sane range, not submitting', score);
+  // Coerce defensively — `score` should already be a number from the game
+  // loop, but a string ("15") fails Number.isInteger and would have been
+  // silently dropped here, which looks identical to "the update didn't
+  // happen" from the outside. Normalise first, then validate.
+  const numScore = typeof score === 'number' ? score : Number(score);
+  console.log('submitScore called with', { name, score, numScore, type: typeof score });
+
+  if (!Number.isInteger(numScore) || numScore < 0 || numScore > MAX_SANE_SCORE) {
+    console.warn('submitScore: score out of sane range, not submitting', numScore);
     return;
   }
   const cleanName = (name || '').slice(0, 40).trim() || 'ANONYMOUS';
@@ -424,20 +431,45 @@ window.submitScore = async function submitScore(name, score){
       .select('score')
       .eq('name', cleanName)
       .maybeSingle();
-    if (selectError) { console.error('submitScore lookup failed:', selectError.message); return; }
+    if (selectError) { console.error('submitScore lookup failed:', selectError); return; }
+    console.log('submitScore existing row for', cleanName, '=', existing);
 
     if (!existing) {
-      const { error } = await supabase.from('scores').insert({ name: cleanName, score });
-      if (error) console.error('submitScore insert failed:', error.message);
+      const { error } = await supabase.from('scores').insert({ name: cleanName, score: numScore });
+      if (error) console.error('submitScore insert failed:', error);
+      else console.log('submitScore inserted new row', { name: cleanName, score: numScore });
       return;
     }
-    if (score <= existing.score) return;   // not a new best, leave the stored row alone
 
-    const { error } = await supabase
+    // existing.score comes back from Postgres as whatever type the column
+    // actually is — if it's a text/varchar column instead of int/numeric,
+    // this arrives as a STRING, and a naive `numScore <= existing.score`
+    // would silently do the wrong thing for multi-digit comparisons in some
+    // edge cases. Force both sides to Number explicitly so the comparison
+    // is always numeric regardless of the column's real type.
+    const storedScore = Number(existing.score);
+    console.log('submitScore comparing', { numScore, storedScore, willUpdate: numScore > storedScore });
+    if (!(numScore > storedScore)) {
+      console.log('submitScore: not a new best, leaving stored row unchanged');
+      return;
+    }
+
+    const { data: updated, error, count } = await supabase
       .from('scores')
-      .update({ score })
-      .eq('name', cleanName);
-    if (error) console.error('submitScore update failed:', error.message);
+      .update({ score: numScore })
+      .eq('name', cleanName)
+      .select();
+    if (error) {
+      console.error('submitScore update failed:', error);
+    } else if (!updated || updated.length === 0) {
+      // No error, but nothing matched — almost always means cleanName
+      // doesn't byte-for-byte match what's stored (casing, whitespace,
+      // or the row was stored under a different name before .trim() was
+      // added). Surface this loudly since it looks identical to success.
+      console.error('submitScore update matched 0 rows for name:', JSON.stringify(cleanName));
+    } else {
+      console.log('submitScore updated row', updated);
+    }
   } catch (err) {
     console.error('submitScore failed:', err);
   }
